@@ -1,5 +1,6 @@
 package com.example;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
 import org.apache.commons.csv.CSVPrinter;
@@ -27,6 +28,7 @@ public class CourtDecisionSummarizer {
 	private static Map<String, String> categoryMap; // Маппинг category_code на name
 	private static final int MAX_RETRIES = 3; // Максимум повторных попыток
 	private static final long BASE_DELAY_MS = 2000; // Базовая задержка 2 секунды
+	private static final ObjectMapper objectMapper = new ObjectMapper(); // Для парсинга JSON
 
 	public static void main(String[] args) {
 		// Загрузка API-ключа из config.properties
@@ -158,9 +160,12 @@ public class CourtDecisionSummarizer {
 				HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 				if (response.statusCode() != 200) {
 					String body = response.body();
-					System.err.println("Ответ API Groq: " + body); // Отладочный вывод
+					System.err.println("Ответ API Groq: " + body);
 					if (body.contains("rate_limit_exceeded")) {
-						// Извлечение времени ожидания
+						if (body.contains("requests per day")) {
+							throw new RuntimeException("Исчерпан дневной лимит запросов (RPD: 1000). Попробуйте снова через 24 часа или повысьте тариф на https://console.groq.com/settings/billing");
+						}
+						// Извлечение времени ожидания для минутного лимита
 						long waitTime = extractWaitTime(body);
 						System.err.println("Лимит запросов, ожидание " + waitTime + " мс");
 						Thread.sleep(waitTime);
@@ -170,16 +175,21 @@ public class CourtDecisionSummarizer {
 					throw new RuntimeException("Ошибка API Groq: " + body);
 				}
 
-				// Парсинг JSON-ответа
+				// Парсинг JSON-ответа с помощью Jackson
 				String body = response.body();
 				System.out.println("Полный ответ Groq: " + body); // Отладочный вывод
-				int start = body.indexOf("\"content\":\"") + 10;
-				int end = body.indexOf("\"", start);
-				if (start == -1 || end == -1) {
-					throw new RuntimeException("Не удалось разобрать ответ API Groq: " + body);
+				try {
+					Map<String, Object> jsonResponse = objectMapper.readValue(body, Map.class);
+					List<Map<String, Object>> choices = (List<Map<String, Object>>) jsonResponse.get("choices");
+					if (choices == null || choices.isEmpty()) {
+						throw new RuntimeException("Пустой список choices в ответе Groq");
+					}
+					Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+					String content = (String) message.get("content");
+					return content != null && !content.trim().isEmpty() ? content : null;
+				} catch (Exception e) {
+					throw new RuntimeException("Не удалось разобрать ответ API Groq: " + e.getMessage());
 				}
-				String content = body.substring(start, end);
-				return content.isEmpty() ? null : content;
 
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
