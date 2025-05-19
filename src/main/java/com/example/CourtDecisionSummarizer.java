@@ -37,7 +37,7 @@ public class CourtDecisionSummarizer {
 			Configuration config = configs.properties("config.properties");
 			apiKey = config.getString("api_token");
 		} catch (ConfigurationException e) {
-			System.err.println("Ошибка чтения config.properties: " + e.getMessage());
+			System.err.println("Помилка читання config.properties: " + e.getMessage());
 			return;
 		}
 
@@ -48,7 +48,7 @@ public class CourtDecisionSummarizer {
 		Path categoriesFile = Paths.get(datasetDir, "cleaned_cause_categories.csv");
 		Path outputFile = Paths.get(datasetDir, "analyzed_cause_categories.csv");
 		if (!Files.exists(categoriesFile)) {
-			System.err.println("cleaned_cause_categories.csv не найден в " + datasetDir);
+			System.err.println("cleaned_cause_categories.csv не знайдено в " + datasetDir);
 			return;
 		}
 
@@ -65,9 +65,9 @@ public class CourtDecisionSummarizer {
 					records.add(new String[]{code, name, text});
 				}
 			}
-			System.out.println("Загружено " + categoryMap.size() + " категорий из cleaned_cause_categories.csv");
+			System.out.println("Завантажено " + categoryMap.size() + " категорій із cleaned_cause_categories.csv");
 		} catch (IOException e) {
-			System.err.println("Ошибка чтения cleaned_cause_categories.csv: " + e.getMessage());
+			System.err.println("Помилка читання cleaned_cause_categories.csv: " + e.getMessage());
 			return;
 		}
 
@@ -80,7 +80,7 @@ public class CourtDecisionSummarizer {
 		int maxRecords = 10; // Ограничение для теста
 		for (String[] record : records) {
 			if (recordCount >= maxRecords) {
-				System.out.println("Достигнуто ограничение в " + maxRecords + " записей для теста.");
+				System.out.println("Досягнуто обмеження в " + maxRecords + " записів для тесту.");
 				break;
 			}
 			recordCount++;
@@ -89,7 +89,7 @@ public class CourtDecisionSummarizer {
 			String name = record[1];
 			String text = record[2];
 			if (name == null || name.isEmpty()) {
-				System.err.println("Пустое имя для записи с кодом " + code);
+				System.err.println("Порожнє ім'я для запису з кодом " + code);
 				updatedRecords.add(record); // Сохраняем без изменений
 				continue;
 			}
@@ -101,19 +101,19 @@ public class CourtDecisionSummarizer {
 				// Запрос на оценку и аналитику
 				String analysis = analyzeWithGroq(client, name);
 				if (analysis == null || analysis.trim().isEmpty()) {
-					System.err.println("Пустой анализ для записи с кодом " + code);
+					System.err.println("Порожній аналіз для запису з кодом " + code);
 					updatedRecords.add(record); // Сохраняем без изменений
 					continue;
 				}
 				updatedRecords.add(new String[]{code, name, analysis});
 				StringBuilder output = new StringBuilder();
-				output.append("Анализ для записи с кодом ").append(code)
+				output.append("Аналіз для запису з кодом ").append(code)
 						.append(": ").append(analysis)
-						.append(" [Категория: ").append(name)
+						.append(" [Категорія: ").append(name)
 						.append(", Код: ").append(code).append("]");
 				System.out.println(output);
 			} catch (Exception e) {
-				System.err.println("Ошибка при анализе для записи с кодом " + code + ": " + e.getMessage());
+				System.err.println("Помилка при аналізі для запису з кодом " + code + ": " + e.getMessage());
 				updatedRecords.add(record); // Сохраняем без изменений
 			}
 		}
@@ -122,15 +122,15 @@ public class CourtDecisionSummarizer {
 		try (Writer writer = Files.newBufferedWriter(outputFile);
 			 CSVPrinter csvPrinter = new CSVPrinter(writer, CSVFormat.DEFAULT)) {
 			csvPrinter.printRecords(updatedRecords);
-			System.out.println("Результаты сохранены в " + outputFile);
+			System.out.println("Результати збережено в " + outputFile);
 		} catch (IOException e) {
-			System.err.println("Ошибка записи в " + outputFile + ": " + e.getMessage());
+			System.err.println("Помилка запису в " + outputFile + ": " + e.getMessage());
 		}
 	}
 
 	private static String analyzeWithGroq(HttpClient client, String text) throws Exception {
-		// Промпт для оценки и аналитики
-		String prompt = "Оцени серьёзность и возможные последствия следующего события, а также предоставь краткий анализ: " + text;
+		// Промпт на украинском языке
+		String prompt = "Оціни серйозність та можливі наслідки наступної події, а також надайте короткий аналіз: " + text;
 		String requestBody = """
                 {
                     "model": "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -160,43 +160,40 @@ public class CourtDecisionSummarizer {
 				HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 				if (response.statusCode() != 200) {
 					String body = response.body();
-					System.err.println("Ответ API Groq: " + body);
 					if (body.contains("rate_limit_exceeded")) {
 						if (body.contains("requests per day")) {
-							throw new RuntimeException("Исчерпан дневной лимит запросов (RPD: 1000). Попробуйте снова через 24 часа или повысьте тариф на https://console.groq.com/settings/billing");
+							throw new RuntimeException("Вичерпано денний ліміт запитів (RPD: 1000). Спробуйте знову через 24 години або підвищте тариф на https://console.groq.com/settings/billing");
 						}
 						// Извлечение времени ожидания для минутного лимита
 						long waitTime = extractWaitTime(body);
-						System.err.println("Лимит запросов, ожидание " + waitTime + " мс");
+						System.err.println("Ліміт запитів, очікування " + waitTime + " мс");
 						Thread.sleep(waitTime);
 						retryCount++;
 						continue;
 					}
-					throw new RuntimeException("Ошибка API Groq: " + body);
+					throw new RuntimeException("Помилка API Groq: " + body);
 				}
 
 				// Парсинг JSON-ответа с помощью Jackson
-				String body = response.body();
-				System.out.println("Полный ответ Groq: " + body); // Отладочный вывод
 				try {
-					Map<String, Object> jsonResponse = objectMapper.readValue(body, Map.class);
+					Map<String, Object> jsonResponse = objectMapper.readValue(response.body(), Map.class);
 					List<Map<String, Object>> choices = (List<Map<String, Object>>) jsonResponse.get("choices");
 					if (choices == null || choices.isEmpty()) {
-						throw new RuntimeException("Пустой список choices в ответе Groq");
+						throw new RuntimeException("Порожній список choices в відповіді Groq");
 					}
 					Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
 					String content = (String) message.get("content");
 					return content != null && !content.trim().isEmpty() ? content : null;
 				} catch (Exception e) {
-					throw new RuntimeException("Не удалось разобрать ответ API Groq: " + e.getMessage());
+					throw new RuntimeException("Не вдалося розібрати відповідь API Groq: " + e.getMessage());
 				}
 
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
-				throw new RuntimeException("Прервано ожидание: " + e.getMessage());
+				throw new RuntimeException("Перервано очікування: " + e.getMessage());
 			}
 		}
-		throw new RuntimeException("Превышено количество попыток для запроса");
+		throw new RuntimeException("Перевищено кількість спроб для запиту");
 	}
 
 	private static long extractWaitTime(String errorBody) {
