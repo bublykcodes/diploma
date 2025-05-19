@@ -14,8 +14,8 @@ import java.util.regex.Pattern;
 public class CsvFixer {
     public static void main(String[] args) {
         // Указываем путь к файлам
-        String inputFile = "E:\\KARAGAEB\\datasetfordiploma\\documents.csv";
-        String outputFile = "E:\\KARAGAEB\\datasetfordiploma\\cleaned_documents.csv";
+        String inputFile = "E:\\KARAGAEB\\datasetfordiploma\\regions.csv";
+        String outputFile = "E:\\KARAGAEB\\datasetfordiploma\\cleaned_regions.csv";
 
         try {
             // Чтение и обработка CSV
@@ -32,7 +32,7 @@ public class CsvFixer {
 
     private static List<String[]> processCsv(String inputFile) throws IOException {
         List<String[]> result = new ArrayList<>();
-        result.add(new String[]{"category_code", "name"}); // Заголовок
+        result.add(new String[]{"category_code", "name", "text"}); // Заголовок с новым столбцом text
 
         try (CSVReader reader = new CSVReader(
                 new InputStreamReader(new FileInputStream(inputFile), StandardCharsets.UTF_8))) {
@@ -66,8 +66,8 @@ public class CsvFixer {
                     continue;
                 }
 
-                // Добавляем обработанную строку
-                result.add(new String[]{code, name});
+                // Добавляем обработанную строку с пустым столбцом text
+                result.add(new String[]{code, name, ""});
             }
         } catch (CsvValidationException e) {
             throw new RuntimeException(e);
