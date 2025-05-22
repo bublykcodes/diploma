@@ -17,21 +17,18 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
+import java.sql.SQLException;
+import java.util.*;
 
 public class CourtDecisionSummarizer {
 	private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 	private static String apiKey;
-	private static Map<String, String> categoryMap; // Маппинг category_code на name
-	private static final int MAX_RETRIES = 3; // Максимум повторных попыток
-	private static final long BASE_DELAY_MS = 2000; // Базовая задержка 2 секунды
-	private static final ObjectMapper objectMapper = new ObjectMapper(); // Для парсинга JSON
+	private static Map<String, String> categoryMap;
+	private static final int MAX_RETRIES = 3;
+	private static final long BASE_DELAY_MS = 2000;
+	private static final ObjectMapper objectMapper = new ObjectMapper();
 
 	public static void main(String[] args) {
-		// Загрузка API-ключа из config.properties
 		try {
 			Configurations configs = new Configurations();
 			Configuration config = configs.properties("config.properties");
@@ -41,10 +38,18 @@ public class CourtDecisionSummarizer {
 			return;
 		}
 
+		// Підключення до БД
+		try {
+			DatabaseHelper.connect();
+			System.out.println("Підключення до бази даних успішне.");
+		} catch (Exception e) {
+			System.err.println("Помилка при підключенні до БД: " + e.getMessage());
+			return;
+		}
+
 		String datasetDir = args.length > 0 ? args[0] : "e:/KARAGAEB/datasetfordiploma";
 		categoryMap = new HashMap<>();
 
-		// Загрузка cleaned_cause_categories.csv
 		Path categoriesFile = Paths.get(datasetDir, "cleaned_cause_categories.csv");
 		Path outputFile = Paths.get(datasetDir, "analyzed_cause_categories.csv");
 		if (!Files.exists(categoriesFile)) {
@@ -52,7 +57,6 @@ public class CourtDecisionSummarizer {
 			return;
 		}
 
-		// Загрузка категорий в categoryMap и подготовка данных
 		List<String[]> records = new ArrayList<>();
 		try (Reader reader = Files.newBufferedReader(categoriesFile);
 			 CSVParser csvParser = new CSVParser(reader, CSVFormat.DEFAULT.withFirstRecordAsHeader())) {
@@ -71,13 +75,12 @@ public class CourtDecisionSummarizer {
 			return;
 		}
 
-		// Обработка категорий и заполнение столбца text (ограничение на 10 записей для теста)
 		HttpClient client = HttpClient.newHttpClient();
 		List<String[]> updatedRecords = new ArrayList<>();
-		updatedRecords.add(new String[]{"category_code", "name", "text"}); // Заголовок
+		updatedRecords.add(new String[]{"category_code", "name", "text"});
 
 		int recordCount = 0;
-		int maxRecords = 10; // Ограничение для теста
+		int maxRecords = 10;
 		for (String[] record : records) {
 			if (recordCount >= maxRecords) {
 				System.out.println("Досягнуто обмеження в " + maxRecords + " записів для тесту.");
@@ -90,35 +93,35 @@ public class CourtDecisionSummarizer {
 			String text = record[2];
 			if (name == null || name.isEmpty()) {
 				System.err.println("Порожнє ім'я для запису з кодом " + code);
-				updatedRecords.add(record); // Сохраняем без изменений
+				updatedRecords.add(record);
 				continue;
 			}
-			// Ограничение длины текста для API
 			if (name.length() > 1000) {
 				name = name.substring(0, 1000);
 			}
 			try {
-				// Запрос на оценку и аналитику
 				String analysis = analyzeWithGroq(client, name);
 				if (analysis == null || analysis.trim().isEmpty()) {
 					System.err.println("Порожній аналіз для запису з кодом " + code);
-					updatedRecords.add(record); // Сохраняем без изменений
+					updatedRecords.add(record);
 					continue;
 				}
 				updatedRecords.add(new String[]{code, name, analysis});
-				StringBuilder output = new StringBuilder();
-				output.append("Аналіз для запису з кодом ").append(code)
-						.append(": ").append(analysis)
-						.append(" [Категорія: ").append(name)
-						.append(", Код: ").append(code).append("]");
-				System.out.println(output);
+
+				// Запис у БД
+				try {
+					DatabaseHelper.insertOrUpdate(code, name, analysis);
+				} catch (SQLException e) {
+					System.err.println("Помилка запису до БД для коду " + code + ": " + e.getMessage());
+				}
+
+				System.out.println("Аналіз для запису з кодом " + code + ": " + analysis);
 			} catch (Exception e) {
 				System.err.println("Помилка при аналізі для запису з кодом " + code + ": " + e.getMessage());
-				updatedRecords.add(record); // Сохраняем без изменений
+				updatedRecords.add(record);
 			}
 		}
 
-		// Запись результатов в analyzed_cause_categories.csv
 		try (Writer writer = Files.newBufferedWriter(outputFile);
 			 CSVPrinter csvPrinter = new CSVPrinter(writer, CSVFormat.DEFAULT)) {
 			csvPrinter.printRecords(updatedRecords);
@@ -126,10 +129,16 @@ public class CourtDecisionSummarizer {
 		} catch (IOException e) {
 			System.err.println("Помилка запису в " + outputFile + ": " + e.getMessage());
 		}
+
+		// Закриття з'єднання
+		try {
+			DatabaseHelper.close();
+		} catch (SQLException e) {
+			System.err.println("Помилка при закритті з'єднання з БД: " + e.getMessage());
+		}
 	}
 
 	private static String analyzeWithGroq(HttpClient client, String text) throws Exception {
-		// Промпт на украинском языке
 		String prompt = "Оціни серйозність та можливі наслідки наступної події, а також надайте короткий аналіз: " + text;
 		String requestBody = """
                 {
@@ -147,9 +156,7 @@ public class CourtDecisionSummarizer {
 		int retryCount = 0;
 		while (retryCount < MAX_RETRIES) {
 			try {
-				// Базовая задержка для соблюдения лимита
 				Thread.sleep(BASE_DELAY_MS);
-
 				HttpRequest request = HttpRequest.newBuilder()
 						.uri(URI.create(GROQ_API_URL))
 						.header("Authorization", "Bearer " + apiKey)
@@ -162,9 +169,8 @@ public class CourtDecisionSummarizer {
 					String body = response.body();
 					if (body.contains("rate_limit_exceeded")) {
 						if (body.contains("requests per day")) {
-							throw new RuntimeException("Вичерпано денний ліміт запитів (RPD: 1000). Спробуйте знову через 24 години або підвищте тариф на https://console.groq.com/settings/billing");
+							throw new RuntimeException("Вичерпано денний ліміт запитів. Спробуйте знову пізніше.");
 						}
-						// Извлечение времени ожидания для минутного лимита
 						long waitTime = extractWaitTime(body);
 						System.err.println("Ліміт запитів, очікування " + waitTime + " мс");
 						Thread.sleep(waitTime);
@@ -174,19 +180,10 @@ public class CourtDecisionSummarizer {
 					throw new RuntimeException("Помилка API Groq: " + body);
 				}
 
-				// Парсинг JSON-ответа с помощью Jackson
-				try {
-					Map<String, Object> jsonResponse = objectMapper.readValue(response.body(), Map.class);
-					List<Map<String, Object>> choices = (List<Map<String, Object>>) jsonResponse.get("choices");
-					if (choices == null || choices.isEmpty()) {
-						throw new RuntimeException("Порожній список choices в відповіді Groq");
-					}
-					Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
-					String content = (String) message.get("content");
-					return content != null && !content.trim().isEmpty() ? content : null;
-				} catch (Exception e) {
-					throw new RuntimeException("Не вдалося розібрати відповідь API Groq: " + e.getMessage());
-				}
+				Map<String, Object> jsonResponse = objectMapper.readValue(response.body(), Map.class);
+				List<Map<String, Object>> choices = (List<Map<String, Object>>) jsonResponse.get("choices");
+				Map<String, Object> message = (Map<String, Object>) choices.get(0).get("message");
+				return (String) message.get("content");
 
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
@@ -203,7 +200,7 @@ public class CourtDecisionSummarizer {
 			String waitTimeStr = errorBody.substring(start, end);
 			return Long.parseLong(waitTimeStr);
 		} catch (Exception e) {
-			return BASE_DELAY_MS; // Возврат базовой задержки
+			return BASE_DELAY_MS;
 		}
 	}
 }
